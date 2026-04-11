@@ -1,0 +1,67 @@
+name: Update tl formula
+
+on:
+  repository_dispatch:
+    types: [tl-release]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to update to (e.g. 0.3.5)"
+        required: true
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Update tl formula
+        env:
+          VERSION: ${{ github.event.client_payload.version || inputs.version }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          BASE_URL="https://github.com/its-magdy/translate-local/releases/download/v${VERSION}"
+
+          get_sha256() {
+            curl -fsSL "$1" | sha256sum | awk '{print $1}'
+          }
+
+          echo "Fetching SHA256s for v${VERSION}..."
+          SHA_DARWIN_ARM64=$(get_sha256 "${BASE_URL}/tl-darwin-arm64")
+          SHA_DARWIN_X64=$(get_sha256   "${BASE_URL}/tl-darwin-x64")
+          SHA_LINUX_ARM64=$(get_sha256  "${BASE_URL}/tl-linux-arm64")
+          SHA_LINUX_X64=$(get_sha256    "${BASE_URL}/tl-linux-x64")
+
+          echo "darwin-arm64: $SHA_DARWIN_ARM64"
+          echo "darwin-x64:   $SHA_DARWIN_X64"
+          echo "linux-arm64:  $SHA_LINUX_ARM64"
+          echo "linux-x64:    $SHA_LINUX_X64"
+
+          FORMULA="Formula/tl.rb"
+
+          sed -i "s/version \".*\"/version \"${VERSION}\"/" "$FORMULA"
+
+          # Update sha256 values in order: darwin-arm64, darwin-x64, linux-arm64, linux-x64
+          awk -v d_arm="$SHA_DARWIN_ARM64" -v d_x64="$SHA_DARWIN_X64" \
+              -v l_arm="$SHA_LINUX_ARM64"  -v l_x64="$SHA_LINUX_X64" '
+            /on_arm/  { arm=1 }
+            /on_intel/{ arm=0 }
+            /on_macos/{ linux=0 }
+            /on_linux/{ linux=1 }
+            /sha256/ {
+              if (!linux && arm)  { sub(/sha256 ".*"/, "sha256 \"" d_arm "\"") }
+              if (!linux && !arm) { sub(/sha256 ".*"/, "sha256 \"" d_x64 "\"") }
+              if (linux && arm)   { sub(/sha256 ".*"/, "sha256 \"" l_arm "\"") }
+              if (linux && !arm)  { sub(/sha256 ".*"/, "sha256 \"" l_x64 "\"") }
+            }
+            { print }
+          ' "$FORMULA" > "$FORMULA.tmp" && mv "$FORMULA.tmp" "$FORMULA"
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "$FORMULA"
+          git diff --cached --quiet && echo "No changes." && exit 0
+          git commit -m "chore: update tl to v${VERSION}"
+          git push
