@@ -1,28 +1,28 @@
 class Tl < Formula
   desc "CLI-first translation tool with glossary enforcement and local models"
   homepage "https://github.com/its-magdy/translate-local"
-  version "0.5.8"
+  version "0.5.9"
   license "MIT"
 
   on_macos do
     on_arm do
       url "https://github.com/its-magdy/translate-local/releases/download/v#{version}/tl-darwin-arm64"
-      sha256 "237361490b368f3a7d6ffbf02fc8564f50e33b96c017e5a81913a3a7db5095d4"
+      sha256 "3c7d8abbd4cb59f73385924061a48fb8461c8e5c53358061843a70cea92d4df8"
     end
     on_intel do
       url "https://github.com/its-magdy/translate-local/releases/download/v#{version}/tl-darwin-x64"
-      sha256 "d51f4c4ad63eb34da1a09e9e2e208926b049d273a3eeab2921383542542dcc60"
+      sha256 "26163c96b3e66f664a89417b9b72b9096aba9f87c9c07d6cbc02e0d451a62434"
     end
   end
 
   on_linux do
     on_arm do
       url "https://github.com/its-magdy/translate-local/releases/download/v#{version}/tl-linux-arm64"
-      sha256 "2e060c5d4177d3d7f29a98d528cb6cf55b93dc9b69537fc278419b6bef8e2817"
+      sha256 "566cc7095ba5737851977e470f23415d87674e09c12c15521582ddf4d5593ec1"
     end
     on_intel do
       url "https://github.com/its-magdy/translate-local/releases/download/v#{version}/tl-linux-x64"
-      sha256 "721b0b78c03e1bcfdb44fce8cdd3683d048f82eed620458e0b1718c1f2d64358"
+      sha256 "c34ef87c3e9594609bd78be74e861b5d8461b51941accb7db0472d09dde08e3a"
     end
   end
 
