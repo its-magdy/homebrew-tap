@@ -24,4 +24,6 @@ jobs:
     steps:
       - uses: Homebrew/actions/setup-homebrew@c262868c096d909fc278daa87ed9772967331ea3 # main
       - run: brew style its-magdy/tap
-      - run: brew audit --strict --tap its-magdy/tap
+      # --except=specs: tl.rb keeps an explicit `version` (its URLs and update-tl.yml rely on it), which
+      # audit flags as redundant with the version in the URL.
+      - run: brew audit --strict --except=specs --tap its-magdy/tap
