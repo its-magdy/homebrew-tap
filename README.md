@@ -79,7 +79,7 @@ The release workflow in each upstream repo sends a `repository_dispatch` event t
 | Workflow | Trigger | What it does |
 |----------|---------|--------------|
 | [`update-tl.yml`](.github/workflows/update-tl.yml) | `tl-release` dispatch, or manual | Downloads the four `tl-{darwin,linux}-{arm64,x64}` release binaries, verifies each one's build provenance with `gh attestation verify`, then writes the version and four SHA256s into `Formula/tl.rb` |
-| [`update-dtwin.yml`](.github/workflows/update-dtwin.yml) | `dtwin-release` dispatch, or manual | Waits up to ~15 min for npm to serve the new tarball, verifies its npm SLSA provenance against design-twin's `release.yml` and the `v<version>` tag, then writes the URL and SHA256 into `Formula/dtwin.rb` |
+| [`update-dtwin.yml`](.github/workflows/update-dtwin.yml) | `dtwin-release` dispatch, or manual | Waits up to ~15 min for npm to serve the new tarball and verifies its npm SLSA provenance against design-twin's `release.yml` and the `v<version>` tag. In a job with no secrets, it then requires the tarball's `bun.lock`, installs from it with `--frozen-lockfile` into an empty cache, and loads the code. Only then does a second job, the one holding the deploy key, check it downloads the same bytes and write the URL and SHA256 into `Formula/dtwin.rb` |
 | [`audit.yml`](.github/workflows/audit.yml) | Push or PR touching `Formula/**` | Runs `brew style` and `brew audit --strict` on the tap |
 | [`zizmor.yml`](.github/workflows/zizmor.yml) | Push or PR touching `.github/workflows/**` | Runs a [zizmor](https://docs.zizmor.sh) static security scan of the workflows |
 
