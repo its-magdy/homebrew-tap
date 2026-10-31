@@ -18,21 +18,25 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  update:
+  # Check the tarball, and install it the way the formula does, in a job that holds no secret: the install runs the
+  # package's code, and the deploy key that can push to main lives only in the update job below.
+  verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     permissions:
       contents: read
+    outputs:
+      url: ${{ steps.check.outputs.url }}
+      sha256: ${{ steps.check.outputs.sha256 }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The formula's bun is Homebrew's, which follows Bun's releases.
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          # The formula commit is pushed with the TAP_DEPLOY_KEY deploy key, not GITHUB_TOKEN: the main-branch
-          # ruleset lets only deploy keys (and the repo admin) push directly, which keeps out every other token
-          # with write access (e.g. the upstream release workflows' GitHub App token, which only needs to dispatch).
-          ssh-key: ${{ secrets.TAP_DEPLOY_KEY }}
-          persist-credentials: true
+          bun-version: latest
+          no-cache: true
 
-      - name: Update dtwin formula
+      - name: Check the dtwin tarball
+        id: check
         env:
           VERSION: ${{ github.event.client_payload.version || inputs.version }}
           # Read-only use: gh attestation verify fetches Sigstore's public trust roots.
@@ -68,10 +72,58 @@ jobs:
             --signer-workflow its-magdy/design-twin/.github/workflows/release.yml \
             --source-ref "refs/tags/v${VERSION}" >&2
 
+          # The formula installs the package's dependencies from the bun.lock it carries (--frozen-lockfile), so the
+          # tarball's SHA256 pins them too. A tarball without one is refused: bun would resolve every range fresh,
+          # with exit 0. Then the install itself, into an empty cache (each dependency checked against the lock's
+          # sha512), and the code loaded against it — `dtwin --version` alone prints with no dependency installed.
+          # A release that fails any of this never reaches the formula, which stays on the last good version.
+          tar -xzf "$WORK/dtwin.tgz" -C "$WORK"
+          PKG="$WORK/package"
+          [ -f "$PKG/bun.lock" ] || { echo "::error::dtwin ${VERSION}'s tarball has no bun.lock; the formula installs only from one"; exit 1; }
+          BUN_INSTALL_CACHE_DIR="$WORK/bun-cache" bun install --cwd "$PKG" --production --frozen-lockfile --ignore-scripts --no-progress
+          bun --cwd "$PKG" --no-install --no-env-file -e 'await import("./src/figma-mcp.ts"); await import("./src/figma-pull.ts")'
+          GOT=$(bun --cwd "$PKG" --no-install --no-env-file src/figma-pull.ts --version)
+          [ "$GOT" = "$VERSION" ] || { echo "::error::dtwin --version printed '$GOT', expected $VERSION"; exit 1; }
+
           SHA256=$(sha256sum "$WORK/dtwin.tgz" | awk '{print $1}')
           rm -rf "$WORK"
           [[ "$SHA256" =~ ^[0-9a-f]{64}$ ]] || { echo "::error::bad sha256: '$SHA256'"; exit 1; }
           echo "dtwin ${VERSION}: ${SHA256}"
+          echo "url=${URL}" >> "$GITHUB_OUTPUT"
+          echo "sha256=${SHA256}" >> "$GITHUB_OUTPUT"
+
+  update:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The formula commit is pushed with the TAP_DEPLOY_KEY deploy key, not GITHUB_TOKEN: the main-branch
+          # ruleset lets only deploy keys (and the repo admin) push directly, which keeps out every other token
+          # with write access (e.g. the upstream release workflows' GitHub App token, which only needs to dispatch).
+          ssh-key: ${{ secrets.TAP_DEPLOY_KEY }}
+          persist-credentials: true
+
+      - name: Update dtwin formula
+        env:
+          VERSION: ${{ github.event.client_payload.version || inputs.version }}
+          URL: ${{ needs.verify.outputs.url }}
+          SHA256: ${{ needs.verify.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+
+          [[ "$SHA256" =~ ^[0-9a-f]{64}$ ]] || { echo "::error::verify gave no sha256: '$SHA256'"; exit 1; }
+          [ "$URL" = "https://registry.npmjs.org/@design-twin/dtwin/-/dtwin-${VERSION}.tgz" ] || { echo "::error::unexpected url: '$URL'"; exit 1; }
+
+          # The bytes the verify job checked, or nothing: npm serves a published version's tarball unchanged.
+          WORK="$(mktemp -d)"
+          curl -fsSL --retry 3 -o "$WORK/dtwin.tgz" "$URL"
+          GOT=$(sha256sum "$WORK/dtwin.tgz" | awk '{print $1}')
+          rm -rf "$WORK"
+          [ "$GOT" = "$SHA256" ] || { echo "::error::$URL is now $GOT, the verify job checked $SHA256"; exit 1; }
 
           FORMULA="Formula/dtwin.rb"
           sed -i -E \
