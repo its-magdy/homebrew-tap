@@ -1,0 +1,29 @@
+name: audit
+
+# Lints the formulae (brew style + brew audit) on every change to them.
+on:
+  push:
+    branches: [main]
+    paths: ["Formula/**", ".github/workflows/audit.yml"]
+  pull_request:
+    paths: ["Formula/**", ".github/workflows/audit.yml"]
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  audit:
+    name: audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: Homebrew/actions/setup-homebrew@c262868c096d909fc278daa87ed9772967331ea3 # main
+      - run: brew style its-magdy/tap
+      # --except=specs: tl.rb keeps an explicit `version` (its URLs and update-tl.yml rely on it), which
+      # audit flags as redundant with the version in the URL.
+      - run: brew audit --strict --except=specs --tap its-magdy/tap

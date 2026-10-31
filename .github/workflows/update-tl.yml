@@ -1,5 +1,7 @@
 name: Update tl formula
 
+# Dispatched by its-magdy/translate-local's release workflow (event_type tl-release, client_payload.version) once
+# the GitHub Release is published; or run by hand with the version.
 on:
   repository_dispatch:
     types: [tl-release]
@@ -9,32 +11,64 @@ on:
         description: "Version to update to (e.g. 0.3.5)"
         required: true
 
+permissions: {}
+
+concurrency:
+  group: update-tl
+  cancel-in-progress: false
+
 jobs:
   update:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Kept: the last step pushes the formula commit with this job's GITHUB_TOKEN.
+          persist-credentials: true
 
       - name: Update tl formula
         env:
           VERSION: ${{ github.event.client_payload.version || inputs.version }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Read-only use: gh attestation verify fetches the public attestations of translate-local.
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
 
-          BASE_URL="https://github.com/its-magdy/translate-local/releases/download/v${VERSION}"
+          # A plain release version only: it is spliced into the formula and a URL.
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::not a release version: '$VERSION'"
+            exit 1
+          fi
 
+          BASE_URL="https://github.com/its-magdy/translate-local/releases/download/v${VERSION}"
+          WORK="$(mktemp -d)"
+
+          # Download each binary, check it was built by translate-local's release workflow (signed build
+          # provenance), and only then take its SHA256. A swapped release asset fails here instead of being
+          # written into the formula.
           get_sha256() {
-            curl -fsSL "$1" | sha256sum | awk '{print $1}'
+            local file="$WORK/tl-$1"
+            curl -fsSL --retry 3 -o "$file" "${BASE_URL}/tl-$1"
+            gh attestation verify "$file" \
+              --repo its-magdy/translate-local \
+              --signer-workflow its-magdy/translate-local/.github/workflows/release.yml \
+              --source-ref "refs/tags/v${VERSION}" >&2
+            sha256sum "$file" | awk '{print $1}'
           }
 
-          echo "Fetching SHA256s for v${VERSION}..."
-          SHA_DARWIN_ARM64=$(get_sha256 "${BASE_URL}/tl-darwin-arm64")
-          SHA_DARWIN_X64=$(get_sha256   "${BASE_URL}/tl-darwin-x64")
-          SHA_LINUX_ARM64=$(get_sha256  "${BASE_URL}/tl-linux-arm64")
-          SHA_LINUX_X64=$(get_sha256    "${BASE_URL}/tl-linux-x64")
+          echo "Fetching and verifying binaries for v${VERSION}..."
+          SHA_DARWIN_ARM64=$(get_sha256 darwin-arm64)
+          SHA_DARWIN_X64=$(get_sha256   darwin-x64)
+          SHA_LINUX_ARM64=$(get_sha256  linux-arm64)
+          SHA_LINUX_X64=$(get_sha256    linux-x64)
+          rm -rf "$WORK"
+
+          for s in "$SHA_DARWIN_ARM64" "$SHA_DARWIN_X64" "$SHA_LINUX_ARM64" "$SHA_LINUX_X64"; do
+            [[ "$s" =~ ^[0-9a-f]{64}$ ]] || { echo "::error::bad sha256: '$s'"; exit 1; }
+          done
 
           echo "darwin-arm64: $SHA_DARWIN_ARM64"
           echo "darwin-x64:   $SHA_DARWIN_X64"
@@ -43,7 +77,7 @@ jobs:
 
           FORMULA="Formula/tl.rb"
 
-          sed -i "s/version \".*\"/version \"${VERSION}\"/" "$FORMULA"
+          sed -i "s/^  version \".*\"/  version \"${VERSION}\"/" "$FORMULA"
 
           # Update sha256 values in order: darwin-arm64, darwin-x64, linux-arm64, linux-x64
           awk -v d_arm="$SHA_DARWIN_ARM64" -v d_x64="$SHA_DARWIN_X64" \
@@ -60,6 +94,12 @@ jobs:
             }
             { print }
           ' "$FORMULA" > "$FORMULA.tmp" && mv "$FORMULA.tmp" "$FORMULA"
+
+          # Every hash must have landed exactly once, and the version line must have changed.
+          for s in "$SHA_DARWIN_ARM64" "$SHA_DARWIN_X64" "$SHA_LINUX_ARM64" "$SHA_LINUX_X64"; do
+            [ "$(grep -c "sha256 \"$s\"" "$FORMULA")" -ge 1 ] || { echo "::error::sha256 $s not written"; exit 1; }
+          done
+          grep -q "^  version \"${VERSION}\"$" "$FORMULA" || { echo "::error::version not written"; exit 1; }
 
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
