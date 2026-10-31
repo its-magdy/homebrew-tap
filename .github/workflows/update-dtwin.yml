@@ -1,0 +1,66 @@
+name: Update dtwin formula
+
+# Dispatched by its-magdy/design-twin's release workflow (event_type dtwin-release, client_payload.version) once
+# @design-twin/dtwin is on npm; or run by hand with the version.
+on:
+  repository_dispatch:
+    types: [dtwin-release]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to update to (e.g. 0.1.1)"
+        required: true
+
+permissions: {}
+
+concurrency:
+  group: update-dtwin
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Kept: the last step pushes the formula commit with this job's GITHUB_TOKEN.
+          persist-credentials: true
+
+      - name: Update dtwin formula
+        env:
+          VERSION: ${{ github.event.client_payload.version || inputs.version }}
+        run: |
+          set -euo pipefail
+
+          # A plain release version only: it is spliced into the formula and a URL.
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::not a release version: '$VERSION'"
+            exit 1
+          fi
+
+          # The one artifact: the npm tarball. The registry can lag the publish by a little, so retry.
+          URL="https://registry.npmjs.org/@design-twin/dtwin/-/dtwin-${VERSION}.tgz"
+          for i in 1 2 3 4 5 6; do
+            if curl -fsSL -o dtwin.tgz "$URL"; then break; fi
+            [ "$i" = 6 ] && { echo "::error::could not download $URL"; exit 1; }
+            sleep 20
+          done
+          SHA256=$(sha256sum dtwin.tgz | awk '{print $1}')
+          rm dtwin.tgz
+          echo "dtwin ${VERSION}: ${SHA256}"
+
+          FORMULA="Formula/dtwin.rb"
+          sed -i -E \
+            -e "s|^  url \".*\"|  url \"${URL}\"|" \
+            -e "s|^  sha256 \".*\"|  sha256 \"${SHA256}\"|" \
+            "$FORMULA"
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "$FORMULA"
+          git diff --cached --quiet && echo "No changes." && exit 0
+          git commit -m "chore: update dtwin to v${VERSION}"
+          git push
