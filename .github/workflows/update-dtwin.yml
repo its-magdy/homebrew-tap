@@ -32,6 +32,8 @@ jobs:
       - name: Update dtwin formula
         env:
           VERSION: ${{ github.event.client_payload.version || inputs.version }}
+          # Read-only use: gh attestation verify fetches Sigstore's public trust roots.
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
 
@@ -44,13 +46,28 @@ jobs:
           # The one artifact: the npm tarball. npm "processes" a new version for a few minutes after the publish
           # (the tarball 404s meanwhile; v0.1.1 took about 5), and this runs right after it — so wait up to ~15 min.
           URL="https://registry.npmjs.org/@design-twin/dtwin/-/dtwin-${VERSION}.tgz"
+          WORK="$(mktemp -d)"
           for i in $(seq 1 30); do
-            if curl -fsSL -o dtwin.tgz "$URL"; then break; fi
+            if curl -fsSL -o "$WORK/dtwin.tgz" "$URL"; then break; fi
             [ "$i" = 30 ] && { echo "::error::$URL still not downloadable after ~15 min — check the version is on npm, then re-run this workflow"; exit 1; }
             sleep 30
           done
-          SHA256=$(sha256sum dtwin.tgz | awk '{print $1}')
-          rm dtwin.tgz
+
+          # Check the tarball was built by design-twin's release workflow from this version's tag (the SLSA
+          # provenance npm published with it), and only then take its SHA256. A swapped tarball fails here instead
+          # of being written into the formula. npm signs the tarball's sha512, hence --digest-alg.
+          curl -fsSL --retry 3 "https://registry.npmjs.org/-/npm/v1/attestations/@design-twin%2fdtwin@${VERSION}" \
+            | jq -ce '.attestations[] | select(.predicateType == "https://slsa.dev/provenance/v1") | .bundle' \
+            > "$WORK/provenance.jsonl"
+          gh attestation verify "$WORK/dtwin.tgz" --digest-alg sha512 \
+            --bundle "$WORK/provenance.jsonl" \
+            --repo its-magdy/design-twin \
+            --signer-workflow its-magdy/design-twin/.github/workflows/release.yml \
+            --source-ref "refs/tags/v${VERSION}" >&2
+
+          SHA256=$(sha256sum "$WORK/dtwin.tgz" | awk '{print $1}')
+          rm -rf "$WORK"
+          [[ "$SHA256" =~ ^[0-9a-f]{64}$ ]] || { echo "::error::bad sha256: '$SHA256'"; exit 1; }
           echo "dtwin ${VERSION}: ${SHA256}"
 
           FORMULA="Formula/dtwin.rb"
@@ -58,6 +75,10 @@ jobs:
             -e "s|^  url \".*\"|  url \"${URL}\"|" \
             -e "s|^  sha256 \".*\"|  sha256 \"${SHA256}\"|" \
             "$FORMULA"
+
+          # The url and the hash must both have landed.
+          grep -qxF "  url \"${URL}\"" "$FORMULA" || { echo "::error::url not written"; exit 1; }
+          grep -qxF "  sha256 \"${SHA256}\"" "$FORMULA" || { echo "::error::sha256 not written"; exit 1; }
 
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
