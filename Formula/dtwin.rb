@@ -8,10 +8,13 @@ class Dtwin < Formula
   depends_on "bun"
 
   def install
-    # The npm package is TypeScript that Bun runs as is: install it, then its production dependencies beside it.
+    # The npm package is TypeScript that Bun runs as is: install it, then its production dependencies beside it,
+    # exactly as the bun.lock it carries pins them (versions and sha512s), so the sha256 above covers them too.
+    # With no lockfile `--frozen-lockfile` would resolve every range fresh, so a package without one is refused.
     libexec.install Dir["*"]
     cd libexec do
-      system formula_opt_bin("bun")/"bun", "install", "--production", "--ignore-scripts", "--no-save"
+      odie "dtwin #{version}'s npm package has no bun.lock to install its dependencies from" unless File.exist?("bun.lock")
+      system formula_opt_bin("bun")/"bun", "install", "--production", "--frozen-lockfile", "--ignore-scripts"
     end
 
     # The package bin's shebang flags: no auto-install from the registry, and the project's .env stays out.
@@ -24,5 +27,8 @@ class Dtwin < Formula
 
   test do
     assert_match version.to_s, shell_output("#{bin}/dtwin --version")
+    # --version prints with no dependency installed: load the MCP server against what the install put there.
+    system formula_opt_bin("bun")/"bun", "--cwd", opt_libexec, "--no-install", "--no-env-file",
+           "-e", 'await import("./src/figma-mcp.ts")'
   end
 end
