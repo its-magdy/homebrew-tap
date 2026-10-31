@@ -4,7 +4,8 @@ updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: weekly
+      # Monthly runs on the 1st of each month.
+      interval: monthly
     # Wait a week before proposing a new release, so a hijacked action version has time to be caught.
     cooldown:
       default-days: 7
