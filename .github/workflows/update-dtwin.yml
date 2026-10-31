@@ -22,11 +22,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
-      contents: write
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # Kept: the last step pushes the formula commit with this job's GITHUB_TOKEN.
+          # The formula commit is pushed with the TAP_DEPLOY_KEY deploy key, not GITHUB_TOKEN: the main-branch
+          # ruleset lets only deploy keys (and the repo admin) push directly, which keeps out every other token
+          # with write access (e.g. the upstream release workflows' GitHub App token, which only needs to dispatch).
+          ssh-key: ${{ secrets.TAP_DEPLOY_KEY }}
           persist-credentials: true
 
       - name: Update dtwin formula
