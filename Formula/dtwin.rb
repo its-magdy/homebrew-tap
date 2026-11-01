@@ -1,8 +1,8 @@
 class Dtwin < Formula
   desc "Design Twin CLI and MCP server: read a Figma design to disk, no API key"
   homepage "https://github.com/its-magdy/design-twin"
-  url "https://registry.npmjs.org/@design-twin/dtwin/-/dtwin-0.1.4.tgz"
-  sha256 "7039a1fe6de196789e0696e9f7ee0e66a82b1fb92bad631c97ed078201b69479"
+  url "https://registry.npmjs.org/@design-twin/dtwin/-/dtwin-0.1.5.tgz"
+  sha256 "67d8c3ac284da53267500447f2aace549e6f41410b89af090403cf9ee270f4c1"
   license "MIT"
 
   depends_on "bun"
